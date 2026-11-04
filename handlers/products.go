@@ -18,7 +18,7 @@ func NewProductHandler(db *sql.DB) *ProductHandler {
 }
 
 func (productHandler *ProductHandler) GetProducts(writer http.ResponseWriter, req *http.Request) {
-	rows, err := productHandler.DB.Query("SELECT id, name, description, price_cents, stock FROM products")
+	rows, err := productHandler.DB.Query("SELECT * FROM products")
 	if err != nil {
 		writeError(writer, http.StatusInternalServerError, err.Error())
 		return
@@ -29,7 +29,7 @@ func (productHandler *ProductHandler) GetProducts(writer http.ResponseWriter, re
 
 	for rows.Next() {
 		var product models.Product
-		err := rows.Scan(&product.ID, &product.Name, &product.Description, &product.PriceCents, &product.Stock)
+		err := rows.Scan(&product.ID, &product.Name, &product.Description, &product.PriceCents, &product.Stock, &product.CreatedAt)
 		if err != nil {
 			writeError(writer, http.StatusInternalServerError, err.Error())
 			return
