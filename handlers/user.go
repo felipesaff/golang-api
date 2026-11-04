@@ -1,123 +1,106 @@
 package handlers
 
 import (
-	"crud-api/models"
-	"database/sql"
+	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
-	"strconv"
 
-	"github.com/lib/pq"
+	userdto "crud-api/dto/user"
+	"crud-api/models"
+	"crud-api/services"
 )
 
+// UserService é o que o handler precisa da camada de negócio.
+type UserService interface {
+	GetByID(ctx context.Context, id int64) (models.User, error)
+	Create(ctx context.Context, in services.CreateUserInput) (models.User, error)
+	Update(ctx context.Context, id int64, in services.UpdateUserInput) (models.User, error)
+	Delete(ctx context.Context, id int64) error
+}
+
 type UserHandler struct {
-	DB *sql.DB
+	service UserService
 }
 
-func NewUserHandler(db *sql.DB) *UserHandler {
-	return &UserHandler{DB: db}
+func NewUserHandler(service UserService) *UserHandler {
+	return &UserHandler{service: service}
 }
 
-func (userHandler *UserHandler) GetUserByID(writer http.ResponseWriter, req *http.Request) {
-	id, err := strconv.ParseInt(req.PathValue("id"), 10, 64)
-	if err != nil {
-		writeError(writer, http.StatusBadRequest, "Invalid user ID")
+func (h *UserHandler) GetUserByID(writer http.ResponseWriter, req *http.Request) {
+	id, ok := parseID(writer, req, "user")
+	if !ok {
 		return
 	}
 
-	row := userHandler.DB.QueryRow("SELECT id, name, email FROM users WHERE id = $1", id)
-	var user models.User
-	err = row.Scan(&user.ID, &user.Name, &user.Email)
+	user, err := h.service.GetByID(req.Context(), id)
 	if err != nil {
-		writeError(writer, http.StatusInternalServerError, err.Error())
+		writeServiceError(writer, err)
 		return
 	}
-	writeJSON(writer, http.StatusOK, user)
+	writeJSON(writer, http.StatusOK, toUserResponse(user))
 }
 
-func (userHandler *UserHandler) CreateUser(writer http.ResponseWriter, req *http.Request) {
-	var user models.User
-	if err := json.NewDecoder(req.Body).Decode(&user); err != nil {
-		writeError(writer, http.StatusBadRequest, "Invalid request payload")
+func (h *UserHandler) CreateUser(writer http.ResponseWriter, req *http.Request) {
+	var body userdto.CreateUserRequestDto
+	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+		writeError(writer, http.StatusBadRequest, "invalid json")
 		return
 	}
 
-	if user.Name == "" {
-		writeError(writer, http.StatusBadRequest, "Invalid user name")
-		return
-	}
-	if user.Email == "" {
-		writeError(writer, http.StatusBadRequest, "Invalid user email")
-		return
-	}
-	if user.Document == "" {
-		writeError(writer, http.StatusBadRequest, "Invalid user document")
-		return
-	}
-
-	tx, err := userHandler.DB.Begin()
+	user, err := h.service.Create(req.Context(), services.CreateUserInput{
+		Name:     body.Name,
+		Email:    body.Email,
+		Document: body.Document,
+	})
 	if err != nil {
-		writeError(writer, http.StatusInternalServerError, err.Error())
+		writeServiceError(writer, err)
 		return
 	}
-
-	if _, err := tx.Exec(`
-		INSERT INTO users
-		(name, email, document)
-		VALUES ($1, $2, $3)`,
-		user.Name,
-		user.Email,
-		user.Document); err != nil {
-		var pqErr *pq.Error
-		if errors.As(err, &pqErr) && pqErr.Code == "23505" {
-			tx.Rollback()
-			writeError(writer, http.StatusConflict, "Email or document already registered")
-			return
-		}
-		tx.Rollback()
-		writeError(writer, http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	tx.Commit()
-	writeJSON(writer, http.StatusCreated, user)
+	writeJSON(writer, http.StatusCreated, toUserResponse(user))
 }
 
-func (userHandler *UserHandler) UpdateUser(writer http.ResponseWriter, req *http.Request) {
-	id, err := strconv.ParseInt(req.PathValue("id"), 10, 64)
+func (h *UserHandler) UpdateUser(writer http.ResponseWriter, req *http.Request) {
+	id, ok := parseID(writer, req, "user")
+	if !ok {
+		return
+	}
+
+	var body userdto.UpdateUserRequestDto
+	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+		writeError(writer, http.StatusBadRequest, "invalid json")
+		return
+	}
+
+	user, err := h.service.Update(req.Context(), id, services.UpdateUserInput{
+		Name:  body.Name,
+		Email: body.Email,
+	})
 	if err != nil {
-		writeError(writer, http.StatusBadRequest, "Invalid user ID")
+		writeServiceError(writer, err)
 		return
 	}
-
-	var user models.User
-	if err := json.NewDecoder(req.Body).Decode(&user); err != nil {
-		writeError(writer, http.StatusBadRequest, "Invalid request payload")
-		return
-	}
-
-	_, err = userHandler.DB.Exec("UPDATE users SET name = $1, email = $2 WHERE id = $3", user.Name, user.Email, id)
-	if err != nil {
-		writeError(writer, http.StatusInternalServerError, "Failed to update user")
-		return
-	}
-
-	writeJSON(writer, http.StatusOK, user)
+	writeJSON(writer, http.StatusOK, toUserResponse(user))
 }
 
-func (userHandler *UserHandler) DeleteUser(writer http.ResponseWriter, req *http.Request) {
-	id, err := strconv.ParseInt(req.PathValue("id"), 10, 64)
-	if err != nil {
-		writeError(writer, http.StatusBadRequest, "Invalid user ID")
+func (h *UserHandler) DeleteUser(writer http.ResponseWriter, req *http.Request) {
+	id, ok := parseID(writer, req, "user")
+	if !ok {
 		return
 	}
 
-	_, err = userHandler.DB.Exec("DELETE FROM users WHERE id = $1", id)
-	if err != nil {
-		writeError(writer, http.StatusInternalServerError, "Failed to delete user")
+	if err := h.service.Delete(req.Context(), id); err != nil {
+		writeServiceError(writer, err)
 		return
 	}
-
 	writeJSON(writer, http.StatusOK, map[string]string{"message": "User deleted successfully"})
+}
+
+func toUserResponse(u models.User) userdto.UserResponse {
+	return userdto.UserResponse{
+		ID:        u.ID,
+		Name:      u.Name,
+		Email:     u.Email,
+		Document:  u.Document,
+		CreatedAt: u.CreatedAt,
+	}
 }

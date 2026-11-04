@@ -7,8 +7,6 @@ import (
 	"fmt"
 
 	"crud-api/models"
-
-	"github.com/lib/pq"
 )
 
 type OrderRepository struct {
@@ -17,45 +15,6 @@ type OrderRepository struct {
 
 func NewOrderRepository(db *sql.DB) *OrderRepository {
 	return &OrderRepository{db: db}
-}
-
-// UserExists informa se o usuário existe.
-// TODO: mover para um UserRepository quando users for migrado para esta arquitetura.
-func (r *OrderRepository) UserExists(ctx context.Context, userID int64) (bool, error) {
-	var exists bool
-	err := r.db.QueryRowContext(ctx,
-		"SELECT EXISTS (SELECT 1 FROM users WHERE id = $1)", userID,
-	).Scan(&exists)
-	if err != nil {
-		return false, fmt.Errorf("check user %d: %w", userID, err)
-	}
-	return exists, nil
-}
-
-// ProductPrices devolve o preço atual de cada produto encontrado, indexado pelo ID.
-// IDs inexistentes simplesmente não aparecem no mapa.
-// TODO: mover para um ProductRepository quando products for migrado.
-func (r *OrderRepository) ProductPrices(ctx context.Context, productIDs []int64) (map[int64]int64, error) {
-	rows, err := r.db.QueryContext(ctx,
-		"SELECT id, price_cents FROM products WHERE id = ANY($1)", pq.Array(productIDs),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("select product prices: %w", err)
-	}
-	defer rows.Close()
-
-	prices := make(map[int64]int64, len(productIDs))
-	for rows.Next() {
-		var id, price int64
-		if err := rows.Scan(&id, &price); err != nil {
-			return nil, fmt.Errorf("scan product price: %w", err)
-		}
-		prices[id] = price
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate product prices: %w", err)
-	}
-	return prices, nil
 }
 
 // Create grava o pedido e seus itens numa única transação.

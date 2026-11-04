@@ -16,13 +16,18 @@ func main() {
 	defer db.Close()
 
 	// Ligação das camadas: repository -> service -> handler.
+	userRepo := repositories.NewUserRepository(db)
+	productRepo := repositories.NewProductRepository(db)
 	orderRepo := repositories.NewOrderRepository(db)
-	orderService := services.NewOrderService(orderRepo)
+
+	userService := services.NewUserService(userRepo)
+	productService := services.NewProductService(productRepo)
+	orderService := services.NewOrderService(orderRepo, userRepo, productRepo)
 
 	mux := http.NewServeMux()
 	handlers.RegisterHandlers(mux,
-		handlers.NewUserHandler(db),
-		handlers.NewProductHandler(db),
+		handlers.NewUserHandler(userService),
+		handlers.NewProductHandler(productService),
 		handlers.NewOrderHandler(orderService),
 	)
 

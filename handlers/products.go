@@ -1,140 +1,125 @@
 package handlers
 
 import (
-	"crud-api/models"
-	"database/sql"
+	"context"
 	"encoding/json"
-	"log"
 	"net/http"
-	"strconv"
+
+	productdto "crud-api/dto/product"
+	"crud-api/models"
+	"crud-api/services"
 )
 
+// ProductService é o que o handler precisa da camada de negócio.
+type ProductService interface {
+	List(ctx context.Context) ([]models.Product, error)
+	GetByID(ctx context.Context, id int64) (models.Product, error)
+	Create(ctx context.Context, in services.ProductInput) (models.Product, error)
+	Update(ctx context.Context, id int64, in services.ProductInput) (models.Product, error)
+	Delete(ctx context.Context, id int64) error
+}
+
 type ProductHandler struct {
-	DB *sql.DB
+	service ProductService
 }
 
-func NewProductHandler(db *sql.DB) *ProductHandler {
-	return &ProductHandler{DB: db}
+func NewProductHandler(service ProductService) *ProductHandler {
+	return &ProductHandler{service: service}
 }
 
-func (productHandler *ProductHandler) GetProducts(writer http.ResponseWriter, req *http.Request) {
-	rows, err := productHandler.DB.Query("SELECT * FROM products")
+func (h *ProductHandler) GetProducts(writer http.ResponseWriter, req *http.Request) {
+	products, err := h.service.List(req.Context())
 	if err != nil {
-		writeError(writer, http.StatusInternalServerError, err.Error())
-		return
-	}
-	defer rows.Close()
-
-	var products []models.Product
-
-	for rows.Next() {
-		var product models.Product
-		err := rows.Scan(&product.ID, &product.Name, &product.Description, &product.PriceCents, &product.Stock, &product.CreatedAt)
-		if err != nil {
-			writeError(writer, http.StatusInternalServerError, err.Error())
-			return
-		}
-		products = append(products, product)
-	}
-
-	if err = rows.Err(); err != nil {
-		writeError(writer, http.StatusInternalServerError, err.Error())
+		writeServiceError(writer, err)
 		return
 	}
 
-	writeJSON(writer, http.StatusOK, products)
+	res := make([]productdto.ProductResponse, len(products))
+	for i, p := range products {
+		res[i] = toProductResponse(p)
+	}
+	writeJSON(writer, http.StatusOK, res)
 }
 
-func (productHandler *ProductHandler) GetProductByID(writer http.ResponseWriter, req *http.Request) {
-	id, err := strconv.ParseInt(req.PathValue("id"), 10, 64)
-	if err != nil {
-		writeError(writer, http.StatusBadRequest, "Invalid product ID")
+func (h *ProductHandler) GetProductByID(writer http.ResponseWriter, req *http.Request) {
+	id, ok := parseID(writer, req, "product")
+	if !ok {
 		return
 	}
 
-	var product models.Product
-	row := productHandler.DB.QueryRow("SELECT * FROM products WHERE id = $1", id)
-	err = row.Scan(&product.ID, &product.Name, &product.Description, &product.PriceCents, &product.Stock, &product.CreatedAt)
+	product, err := h.service.GetByID(req.Context(), id)
 	if err != nil {
-		writeError(writer, http.StatusInternalServerError, err.Error())
+		writeServiceError(writer, err)
 		return
 	}
-
-	writeJSON(writer, http.StatusOK, product)
+	writeJSON(writer, http.StatusOK, toProductResponse(product))
 }
 
-func (productHandler *ProductHandler) CreateProduct(writer http.ResponseWriter, req *http.Request) {
-	var product models.Product
-	if err := json.NewDecoder(req.Body).Decode(&product); err != nil {
+func (h *ProductHandler) CreateProduct(writer http.ResponseWriter, req *http.Request) {
+	var body productdto.CreateProductDto
+	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
 		writeError(writer, http.StatusBadRequest, "invalid json")
 		return
 	}
-	if product.Name == "" || product.Description == "" || product.PriceCents < 1 || product.Stock < 1 {
-		writeError(writer, http.StatusBadRequest, "name, description are required; price_cents and stock must be >= 1")
-		return
-	}
 
-	err := productHandler.DB.QueryRowContext(req.Context(),
-		`INSERT INTO products (name, description, price_cents, stock)
-		 VALUES ($1, $2, $3, $4) RETURNING id`,
-		product.Name, product.Description, product.PriceCents, product.Stock).Scan(&product.ID)
+	product, err := h.service.Create(req.Context(), services.ProductInput{
+		Name:        body.Name,
+		Description: body.Description,
+		PriceCents:  body.PriceCents,
+		Stock:       int(body.Stock),
+	})
 	if err != nil {
-		log.Printf("create product: %v", err)
-		writeError(writer, http.StatusInternalServerError, "internal error")
+		writeServiceError(writer, err)
 		return
 	}
-
-	writeJSON(writer, http.StatusCreated, product)
+	writeJSON(writer, http.StatusCreated, toProductResponse(product))
 }
 
-func (productHandler *ProductHandler) UpdateProduct(writer http.ResponseWriter, req *http.Request) {
-	id, err := strconv.ParseInt(req.PathValue("id"), 10, 64)
+func (h *ProductHandler) UpdateProduct(writer http.ResponseWriter, req *http.Request) {
+	id, ok := parseID(writer, req, "product")
+	if !ok {
+		return
+	}
+
+	var body productdto.UpdateProductDto
+	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+		writeError(writer, http.StatusBadRequest, "invalid json")
+		return
+	}
+
+	product, err := h.service.Update(req.Context(), id, services.ProductInput{
+		Name:        body.Name,
+		Description: body.Description,
+		PriceCents:  body.PriceCents,
+		Stock:       int(body.Stock),
+	})
 	if err != nil {
-		writeError(writer, http.StatusBadRequest, "Invalid product ID")
+		writeServiceError(writer, err)
 		return
 	}
-
-	var product models.Product
-
-	if err := json.NewDecoder(req.Body).Decode(&product); err != nil {
-		writeError(writer, http.StatusBadRequest, "Invalid request payload")
-		return
-	}
-
-	if product.Name == "" || product.Description == "" || product.PriceCents < 1 || product.Stock < 1 {
-		writeError(writer, http.StatusBadRequest, "name, description are required; price_cents and stock must be >= 1")
-		return
-	}
-
-	_, err = productHandler.DB.Exec("UPDATE products SET name = $1, description = $2, price_cents = $3, stock = $4 WHERE id = $5", product.Name, product.Description, product.PriceCents, product.Stock, id)
-	if err != nil {
-		writeError(writer, http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	row := productHandler.DB.QueryRow("SELECT * FROM products WHERE id = $1", id)
-	var updatedProduct models.Product
-	err = row.Scan(&updatedProduct.ID, &updatedProduct.Name, &updatedProduct.Description, &updatedProduct.PriceCents, &updatedProduct.Stock, &updatedProduct.CreatedAt)
-	if err != nil {
-		writeError(writer, http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	writeJSON(writer, http.StatusOK, updatedProduct)
+	writeJSON(writer, http.StatusOK, toProductResponse(product))
 }
 
-func (productHandler *ProductHandler) DeleteProduct(writer http.ResponseWriter, req *http.Request) {
-	id, err := strconv.ParseInt(req.PathValue("id"), 10, 64)
-	if err != nil {
-		writeError(writer, http.StatusBadRequest, "Invalid product ID")
+func (h *ProductHandler) DeleteProduct(writer http.ResponseWriter, req *http.Request) {
+	id, ok := parseID(writer, req, "product")
+	if !ok {
 		return
 	}
 
-	_, err = productHandler.DB.Exec("DELETE FROM products WHERE id = $1", id)
-	if err != nil {
-		writeError(writer, http.StatusInternalServerError, err.Error())
+	if err := h.service.Delete(req.Context(), id); err != nil {
+		writeServiceError(writer, err)
 		return
 	}
-
 	writeJSON(writer, http.StatusOK, map[string]string{"message": "Product deleted successfully"})
+}
+
+func toProductResponse(p models.Product) productdto.ProductResponse {
+	return productdto.ProductResponse{
+		ID:          p.ID,
+		Name:        p.Name,
+		Description: p.Description,
+		PriceCents:  p.PriceCents,
+		Stock:       p.Stock,
+		CreatedAt:   p.CreatedAt,
+	}
 }

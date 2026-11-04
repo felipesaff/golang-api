@@ -7,21 +7,29 @@ import (
 	"crud-api/models"
 )
 
-// OrderRepository é o que o service precisa do armazenamento. A interface fica
-// aqui (em quem consome), e o repositório Postgres a implementa sem conhecê-la.
+// As interfaces ficam aqui (em quem consome), e os repositórios Postgres as
+// implementam sem conhecê-las. Cada uma pede só os métodos que o pedido usa.
 type OrderRepository interface {
-	UserExists(ctx context.Context, userID int64) (bool, error)
-	ProductPrices(ctx context.Context, productIDs []int64) (map[int64]int64, error)
 	Create(ctx context.Context, order models.Order) error
 	GetByID(ctx context.Context, id int64) (models.OrderDetails, error)
 }
 
-type OrderService struct {
-	repo OrderRepository
+type OrderUserRepository interface {
+	Exists(ctx context.Context, id int64) (bool, error)
 }
 
-func NewOrderService(repo OrderRepository) *OrderService {
-	return &OrderService{repo: repo}
+type OrderProductRepository interface {
+	Prices(ctx context.Context, ids []int64) (map[int64]int64, error)
+}
+
+type OrderService struct {
+	orders   OrderRepository
+	users    OrderUserRepository
+	products OrderProductRepository
+}
+
+func NewOrderService(orders OrderRepository, users OrderUserRepository, products OrderProductRepository) *OrderService {
+	return &OrderService{orders: orders, users: users, products: products}
 }
 
 type CreateOrderInput struct {
@@ -41,19 +49,19 @@ func (s *OrderService) Create(ctx context.Context, in CreateOrderInput) error {
 		return err
 	}
 
-	exists, err := s.repo.UserExists(ctx, in.UserID)
+	exists, err := s.users.Exists(ctx, in.UserID)
 	if err != nil {
 		return err
 	}
 	if !exists {
-		return fmt.Errorf("%w: id %d", models.ErrUserNotFound, in.UserID)
+		return fmt.Errorf("%w: %w (id %d)", models.ErrInvalidReference, models.ErrUserNotFound, in.UserID)
 	}
 
 	productIDs := make([]int64, len(in.Items))
 	for i, item := range in.Items {
 		productIDs[i] = item.ProductID
 	}
-	prices, err := s.repo.ProductPrices(ctx, productIDs)
+	prices, err := s.products.Prices(ctx, productIDs)
 	if err != nil {
 		return err
 	}
@@ -66,7 +74,7 @@ func (s *OrderService) Create(ctx context.Context, in CreateOrderInput) error {
 	for _, item := range in.Items {
 		price, ok := prices[item.ProductID]
 		if !ok {
-			return fmt.Errorf("%w: id %d", models.ErrProductNotFound, item.ProductID)
+			return fmt.Errorf("%w: %w (id %d)", models.ErrInvalidReference, models.ErrProductNotFound, item.ProductID)
 		}
 		order.Items = append(order.Items, models.OrderItem{
 			ProductID:      item.ProductID,
@@ -76,14 +84,14 @@ func (s *OrderService) Create(ctx context.Context, in CreateOrderInput) error {
 		order.TotalCents += price * int64(item.Quantity)
 	}
 
-	return s.repo.Create(ctx, order)
+	return s.orders.Create(ctx, order)
 }
 
 func (s *OrderService) GetByID(ctx context.Context, id int64) (models.OrderDetails, error) {
-	if id < 1 {
-		return models.OrderDetails{}, &models.ValidationError{Msg: "invalid order ID"}
+	if err := validateID(id, "order"); err != nil {
+		return models.OrderDetails{}, err
 	}
-	return s.repo.GetByID(ctx, id)
+	return s.orders.GetByID(ctx, id)
 }
 
 func (in CreateOrderInput) validate() error {
