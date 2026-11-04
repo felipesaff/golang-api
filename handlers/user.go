@@ -4,8 +4,11 @@ import (
 	"crud-api/models"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
+
+	"github.com/lib/pq"
 )
 
 type UserHandler struct {
@@ -40,12 +43,44 @@ func (userHandler *UserHandler) CreateUser(writer http.ResponseWriter, req *http
 		return
 	}
 
-	_, err := userHandler.DB.Exec("INSERT INTO users (name, email) VALUES ($1, $2)", user.Name, user.Email)
-	if err != nil {
-		writeError(writer, http.StatusInternalServerError, "Failed to create user")
+	if user.Name == "" {
+		writeError(writer, http.StatusBadRequest, "Invalid user name")
+		return
+	}
+	if user.Email == "" {
+		writeError(writer, http.StatusBadRequest, "Invalid user email")
+		return
+	}
+	if user.Document == "" {
+		writeError(writer, http.StatusBadRequest, "Invalid user document")
 		return
 	}
 
+	tx, err := userHandler.DB.Begin()
+	if err != nil {
+		writeError(writer, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	if _, err := tx.Exec(`
+		INSERT INTO users
+		(name, email, document)
+		VALUES ($1, $2, $3)`,
+		user.Name,
+		user.Email,
+		user.Document); err != nil {
+		var pqErr *pq.Error
+		if errors.As(err, &pqErr) && pqErr.Code == "23505" {
+			tx.Rollback()
+			writeError(writer, http.StatusConflict, "Email or document already registered")
+			return
+		}
+		tx.Rollback()
+		writeError(writer, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	tx.Commit()
 	writeJSON(writer, http.StatusCreated, user)
 }
 
