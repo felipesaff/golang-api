@@ -1,15 +1,20 @@
 package handlers
 
 import (
-	"database/sql"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
+
+	"crud-api/models"
 )
 
-func RegisterHandlers(mux *http.ServeMux, db *sql.DB) {
-	products := ProductHandler{DB: db}
-	users := UserHandler{DB: db}
+func RegisterHandlers(mux *http.ServeMux, users *UserHandler, products *ProductHandler, orders *OrderHandler) {
+	// User routes
+	mux.HandleFunc("GET /users/{id}", users.GetUserByID)
+	mux.HandleFunc("POST /users", users.CreateUser)
+	mux.HandleFunc("PUT /users/{id}", users.UpdateUser)
+	mux.HandleFunc("DELETE /users/{id}", users.DeleteUser)
 
 	// Product routes
 	mux.HandleFunc("GET /products", products.GetProducts)
@@ -18,11 +23,9 @@ func RegisterHandlers(mux *http.ServeMux, db *sql.DB) {
 	mux.HandleFunc("PUT /products/{id}", products.UpdateProduct)
 	mux.HandleFunc("DELETE /products/{id}", products.DeleteProduct)
 
-	// User routes
-	mux.HandleFunc("GET /users/{id}", users.GetUserByID)
-	mux.HandleFunc("POST /users", users.CreateUser)
-	mux.HandleFunc("PUT /users/{id}", users.UpdateUser)
-	mux.HandleFunc("DELETE /users/{id}", users.DeleteUser)
+	// Order routes
+	mux.HandleFunc("GET /orders/{id}", orders.GetOrderByID)
+	mux.HandleFunc("POST /orders", orders.CreateOrder)
 }
 
 func writeJSON(writer http.ResponseWriter, status int, value any) {
@@ -35,4 +38,21 @@ func writeJSON(writer http.ResponseWriter, status int, value any) {
 
 func writeError(writer http.ResponseWriter, status int, msg string) {
 	writeJSON(writer, status, map[string]string{"error": msg})
+}
+
+// writeServiceError é o único lugar que traduz erros de domínio em status HTTP.
+// Erros desconhecidos vão para o log e o cliente recebe uma mensagem genérica.
+func writeServiceError(writer http.ResponseWriter, err error) {
+	var vErr *models.ValidationError
+	switch {
+	case errors.As(err, &vErr):
+		writeError(writer, http.StatusBadRequest, vErr.Error())
+	case errors.Is(err, models.ErrOrderNotFound):
+		writeError(writer, http.StatusNotFound, err.Error())
+	case errors.Is(err, models.ErrUserNotFound), errors.Is(err, models.ErrProductNotFound):
+		writeError(writer, http.StatusUnprocessableEntity, err.Error())
+	default:
+		log.Printf("internal error: %v", err)
+		writeError(writer, http.StatusInternalServerError, "internal error")
+	}
 }
