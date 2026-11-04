@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"strconv"
 
 	orderdto "crud-api/dto/order"
 	"crud-api/models"
@@ -26,9 +25,8 @@ func NewOrderHandler(service OrderService) *OrderHandler {
 }
 
 func (h *OrderHandler) GetOrderByID(writer http.ResponseWriter, req *http.Request) {
-	id, err := strconv.ParseInt(req.PathValue("id"), 10, 64)
-	if err != nil {
-		writeError(writer, http.StatusBadRequest, "invalid order ID")
+	id, ok := parseID(writer, req, "order")
+	if !ok {
 		return
 	}
 
