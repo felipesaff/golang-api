@@ -70,8 +70,8 @@ func (r *UserRepository) Create(ctx context.Context, u models.User) (models.User
 // models.ErrUserAlreadyExists (email já usado por outro usuário).
 func (r *UserRepository) Update(ctx context.Context, u models.User) (models.User, error) {
 	updated, err := scanUser(r.db.QueryRowContext(ctx,
-		"UPDATE users SET name = $1, email = $2 WHERE id = $3 RETURNING "+userColumns,
-		u.Name, u.Email, u.ID,
+		"UPDATE users SET name = $1 WHERE id = $2 RETURNING "+userColumns,
+		u.Name, u.ID,
 	))
 	if errors.Is(err, sql.ErrNoRows) {
 		return updated, models.ErrUserNotFound

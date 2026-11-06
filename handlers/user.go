@@ -72,8 +72,7 @@ func (h *UserHandler) UpdateUser(writer http.ResponseWriter, req *http.Request) 
 	}
 
 	user, err := h.service.Update(req.Context(), id, services.UpdateUserInput{
-		Name:  body.Name,
-		Email: body.Email,
+		Name: body.Name,
 	})
 	if err != nil {
 		writeServiceError(writer, err)

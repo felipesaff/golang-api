@@ -29,8 +29,7 @@ type CreateUserInput struct {
 
 // UpdateUserInput não tem Document: o documento identifica o usuário e não é alterável.
 type UpdateUserInput struct {
-	Name  string
-	Email string
+	Name string
 }
 
 func (s *UserService) GetByID(ctx context.Context, id int64) (models.User, error) {
@@ -59,10 +58,8 @@ func (s *UserService) Update(ctx context.Context, id int64, in UpdateUserInput) 
 	switch {
 	case isBlank(in.Name):
 		return models.User{}, &models.ValidationError{Msg: "name is required"}
-	case isBlank(in.Email):
-		return models.User{}, &models.ValidationError{Msg: "email is required"}
 	}
-	return s.repo.Update(ctx, models.User{ID: id, Name: in.Name, Email: in.Email})
+	return s.repo.Update(ctx, models.User{ID: id, Name: in.Name})
 }
 
 func (s *UserService) Delete(ctx context.Context, id int64) error {
